@@ -1,11 +1,10 @@
+const mongoose = require('mongoose');
 const User = require('../models/User');
 const InterviewSession = require('../models/InterviewSession');
 const TechnicalSubmission = require('../models/TechnicalSubmission');
 const ResumeAnalysis = require('../models/ResumeAnalysis');
 const CareerRoadmap = require('../models/CareerRoadmap');
-
-// In-memory fallback user activity storage keyed by user ID or Email
-const memoryUserStats = new Map();
+const memoryStore = require('../utils/memoryStore');
 
 exports.getDashboardStats = async (req, res, next) => {
   try {
@@ -13,18 +12,24 @@ exports.getDashboardStats = async (req, res, next) => {
     const userEmail = req.user ? req.user.email : null;
 
     if (!userId && !userEmail) {
-      return res.status(401).json({ success: false, message: 'Unauthorized. Please sign in.' });
+      return res.status(401).json({ success: false, message: 'Unauthorized. Please sign in to view dashboard.' });
     }
 
     let userObj = null;
     try {
-      userObj = await User.findById(userId).select('-password');
+      if (userId && mongoose.Types.ObjectId.isValid(userId)) {
+        userObj = await User.findById(userId).select('-password');
+      }
+      if (!userObj && userEmail) {
+        userObj = await User.findOne({ email: userEmail.toLowerCase() }).select('-password');
+      }
     } catch (e) {
+      console.error('[Dashboard User Query Warning]:', e.message);
       userObj = null;
     }
 
-    const name = userObj?.name || req.user.name || 'Candidate';
-    const email = userObj?.email || userEmail || 'user@example.com';
+    const name = userObj?.name || req.user?.name || 'Candidate';
+    const email = userObj?.email || userEmail || 'candidate@example.com';
     const joinDate = userObj?.createdAt ? new Date(userObj.createdAt).toLocaleDateString() : new Date().toLocaleDateString();
     const lastLogin = new Date().toLocaleDateString();
 
@@ -33,21 +38,62 @@ exports.getDashboardStats = async (req, res, next) => {
     let dbResumes = [];
     let dbRoadmaps = [];
 
-    try {
-      dbSessions = await InterviewSession.find({ user: userId }).sort({ createdAt: -1 });
-      dbTechSubs = await TechnicalSubmission.find({ user: userId }).sort({ createdAt: -1 });
-      dbResumes = await ResumeAnalysis.find({ user: userId }).sort({ createdAt: -1 });
-      dbRoadmaps = await CareerRoadmap.find({ user: userId }).sort({ createdAt: -1 });
-    } catch (dbErr) {
-      const key = (userId || userEmail).toString();
-      const memData = memoryUserStats.get(key) || { sessions: [], techSubs: [], resumes: [], roadmaps: [] };
-      dbSessions = memData.sessions || [];
-      dbTechSubs = memData.techSubs || [];
-      dbResumes = memData.resumes || [];
-      dbRoadmaps = memData.roadmaps || [];
+    // Query MongoDB Atlas filtering strictly by logged in user ID / ObjectId / Email
+    const userQueryConditions = [];
+    if (userId) {
+      userQueryConditions.push({ user: userId });
+      if (mongoose.Types.ObjectId.isValid(userId)) {
+        userQueryConditions.push({ user: new mongoose.Types.ObjectId(userId) });
+      }
+    }
+    if (userEmail) {
+      userQueryConditions.push({ user: userEmail });
     }
 
-    // Dynamic User Aggregations
+    const userQuery = userQueryConditions.length > 0 ? { $or: userQueryConditions } : { user: userId };
+
+    try {
+      dbSessions = await InterviewSession.find(userQuery).sort({ createdAt: -1 });
+      dbTechSubs = await TechnicalSubmission.find(userQuery).sort({ createdAt: -1 });
+      dbResumes = await ResumeAnalysis.find(userQuery).sort({ createdAt: -1 });
+      dbRoadmaps = await CareerRoadmap.find(userQuery).sort({ createdAt: -1 });
+      console.log(`[Dashboard Fetch] Fetched MongoDB Atlas records for user ${userId}: ${dbSessions.length} sessions, ${dbTechSubs.length} tech subs, ${dbResumes.length} resumes, ${dbRoadmaps.length} roadmaps.`);
+    } catch (dbErr) {
+      console.error('[Dashboard DB Fetch Error]:', dbErr.message);
+    }
+
+    // Combine with memory store records to ensure immediate state update after completed interviews
+    const memData = memoryStore.getUserStats(userId, userEmail);
+
+    const allSessionsMap = new Map();
+    [...dbSessions, ...memData.sessions].forEach(s => {
+      const key = s._id ? s._id.toString() : `${s.role}_${s.type}_${new Date(s.createdAt).getTime()}`;
+      if (!allSessionsMap.has(key)) allSessionsMap.set(key, s);
+    });
+    dbSessions = Array.from(allSessionsMap.values());
+
+    const allTechSubsMap = new Map();
+    [...dbTechSubs, ...memData.technicalSubmissions].forEach(t => {
+      const key = t._id ? t._id.toString() : `${t.problemId}_${new Date(t.createdAt).getTime()}`;
+      if (!allTechSubsMap.has(key)) allTechSubsMap.set(key, t);
+    });
+    dbTechSubs = Array.from(allTechSubsMap.values());
+
+    const allResumesMap = new Map();
+    [...dbResumes, ...memData.resumeAnalyses].forEach(r => {
+      const key = r._id ? r._id.toString() : `${r.targetRole}_${new Date(r.createdAt).getTime()}`;
+      if (!allResumesMap.has(key)) allResumesMap.set(key, r);
+    });
+    dbResumes = Array.from(allResumesMap.values());
+
+    const allRoadmapsMap = new Map();
+    [...dbRoadmaps, ...memData.careerRoadmaps].forEach(m => {
+      const key = m._id ? m._id.toString() : `${m.targetRole}_${new Date(m.createdAt).getTime()}`;
+      if (!allRoadmapsMap.has(key)) allRoadmapsMap.set(key, m);
+    });
+    dbRoadmaps = Array.from(allRoadmapsMap.values());
+
+    // Aggregations
     const mockSessions = dbSessions.filter(s => s.type === 'MOCK');
     const hrSessions = dbSessions.filter(s => s.type === 'HR');
 
@@ -70,7 +116,6 @@ exports.getDashboardStats = async (req, res, next) => {
       }
     });
 
-    // Performance Calculations
     const calcAvg = (arr) => {
       if (!arr || arr.length === 0) return 0;
       const sum = arr.reduce((acc, curr) => acc + (curr.overallScore || curr.score || 0), 0);
@@ -92,13 +137,11 @@ exports.getDashboardStats = async (req, res, next) => {
     const bestScore = allScores.length > 0 ? Math.max(...allScores) : 0;
     const latestScore = allScores.length > 0 ? allScores[0] : 0;
 
-    // Coding Statistics
     const problemsAttempted = new Set(dbTechSubs.map(t => t.problemId)).size;
     const problemsSolved = new Set(dbTechSubs.filter(t => t.passedCount === t.totalCount).map(t => t.problemId)).size;
     const totalTestCasesPassed = dbTechSubs.reduce((acc, t) => acc + (t.passedCount || 0), 0);
     const languagesUsed = Array.from(new Set(dbTechSubs.map(t => t.language).filter(Boolean)));
 
-    // Resume & Roadmap Stats
     const resumeUploaded = dbResumes.length > 0;
     const resumeAnalysisHistory = dbResumes.map(r => ({
       id: r._id,
@@ -110,7 +153,6 @@ exports.getDashboardStats = async (req, res, next) => {
     const generatedRoadmapsCount = dbRoadmaps.length;
     const latestCareerGoal = dbRoadmaps.length > 0 ? dbRoadmaps[0].targetRole : (userObj?.role || 'Software Engineer');
 
-    // Recent Activity Feed
     const recentActivity = [];
 
     dbSessions.forEach(s => {
@@ -208,6 +250,7 @@ exports.getDashboardStats = async (req, res, next) => {
       }
     });
   } catch (error) {
+    console.error('[Dashboard Controller Fatal Error]:', error);
     next(error);
   }
 };

@@ -1,6 +1,7 @@
 const codeRunnerService = require('../services/codeRunnerService');
 const aiService = require('../services/aiService');
 const TechnicalSubmission = require('../models/TechnicalSubmission');
+const memoryStore = require('../utils/memoryStore');
 
 /**
  * Handles GET /api/technical/problems
@@ -82,24 +83,31 @@ exports.handleTechnicalSubmission = async (req, res, next) => {
         console.warn('[Technical AI Analysis Note]:', aiErr.message);
       }
 
-      if (req.user) {
+      const userId = req.user ? (req.user.id || req.user._id) : null;
+      if (userId) {
+        const subData = {
+          user: userId,
+          problemId,
+          problemTitle: (problemTitle || problemId).toUpperCase(),
+          language,
+          code,
+          passedCount: executionResult.passedCount,
+          totalCount: executionResult.totalCount,
+          compilationErrors: executionResult.compilationErrors,
+          runtimeErrors: executionResult.runtimeErrors,
+          timeComplexity: executionResult.timeComplexity,
+          spaceComplexity: executionResult.spaceComplexity,
+          executionTimeMs: executionResult.executionTimeMs,
+          createdAt: new Date()
+        };
+
+        memoryStore.addTechnicalSubmission(subData);
+
         try {
-          await TechnicalSubmission.create({
-            user: req.user.id,
-            problemId,
-            problemTitle: (problemTitle || problemId).toUpperCase(),
-            language,
-            code,
-            passedCount: executionResult.passedCount,
-            totalCount: executionResult.totalCount,
-            compilationErrors: executionResult.compilationErrors,
-            runtimeErrors: executionResult.runtimeErrors,
-            timeComplexity: executionResult.timeComplexity,
-            spaceComplexity: executionResult.spaceComplexity,
-            executionTimeMs: executionResult.executionTimeMs
-          });
+          await TechnicalSubmission.create(subData);
+          console.log(`[Dashboard Sync] Technical Submission saved successfully to MongoDB for user: ${userId}`);
         } catch (dbErr) {
-          // Silent fallback
+          console.error(`[Dashboard Sync Warning] MongoDB Atlas save failed for Technical Submission: ${dbErr.message}`);
         }
       }
     }

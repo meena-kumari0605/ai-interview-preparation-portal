@@ -1,6 +1,7 @@
 const resumeParserService = require('../services/resumeParserService');
 const aiService = require('../services/aiService');
 const ResumeAnalysis = require('../models/ResumeAnalysis');
+const memoryStore = require('../utils/memoryStore');
 
 /**
  * Handles POST /api/resume
@@ -33,23 +34,30 @@ exports.handleResumeAnalysis = async (req, res, next) => {
     const analysisResult = await aiService.analyzeResume(resumeText, targetRole);
 
     // Save result if user logged in
-    if (req.user) {
+    const userId = req.user ? (req.user.id || req.user._id) : null;
+    if (userId) {
+      const analysisData = {
+        user: userId,
+        fileName,
+        targetRole,
+        atsScore: analysisResult.atsScore,
+        skills: analysisResult.skills,
+        missingKeywords: analysisResult.missingKeywords,
+        strengths: analysisResult.strengths,
+        weaknesses: analysisResult.weaknesses,
+        suggestedProjects: analysisResult.suggestedProjects,
+        recommendedCertifications: analysisResult.recommendedCertifications,
+        careerSuggestions: analysisResult.careerSuggestions,
+        createdAt: new Date()
+      };
+
+      memoryStore.addResumeAnalysis(analysisData);
+
       try {
-        await ResumeAnalysis.create({
-          user: req.user.id,
-          fileName,
-          targetRole,
-          atsScore: analysisResult.atsScore,
-          skills: analysisResult.skills,
-          missingKeywords: analysisResult.missingKeywords,
-          strengths: analysisResult.strengths,
-          weaknesses: analysisResult.weaknesses,
-          suggestedProjects: analysisResult.suggestedProjects,
-          recommendedCertifications: analysisResult.recommendedCertifications,
-          careerSuggestions: analysisResult.careerSuggestions
-        });
+        await ResumeAnalysis.create(analysisData);
+        console.log(`[Dashboard Sync] Resume Analysis saved successfully to MongoDB for user: ${userId}`);
       } catch (dbErr) {
-        // Fallback for volatile DB
+        console.error(`[Dashboard Sync Warning] MongoDB Atlas save failed for Resume Analysis: ${dbErr.message}`);
       }
     }
 

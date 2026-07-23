@@ -1,5 +1,6 @@
 const aiService = require('../services/aiService');
 const InterviewSession = require('../models/InterviewSession');
+const memoryStore = require('../utils/memoryStore');
 
 /**
  * Handles POST /api/hr-interview
@@ -49,25 +50,31 @@ exports.handleHRInterview = async (req, res, next) => {
         role: role || 'Software Engineer'
       });
 
-      const userId = req.user ? req.user.id : null;
+      const userId = req.user ? (req.user.id || req.user._id) : null;
       if (userId) {
+        const sessionData = {
+          user: userId,
+          type: 'HR',
+          role: role || 'Software Engineer',
+          experience: experience || '2',
+          difficulty: difficulty || 'Medium',
+          questions: [{
+            question,
+            answer: answer || 'SKIP',
+            score: hrEvaluation.overallScore,
+            metrics: hrEvaluation.metrics
+          }],
+          overallScore: hrEvaluation.overallScore,
+          createdAt: new Date()
+        };
+
+        memoryStore.addSession(sessionData);
+
         try {
-          await InterviewSession.create({
-            user: userId,
-            type: 'HR',
-            role: role || 'Software Engineer',
-            experience: experience || '2',
-            difficulty: difficulty || 'Medium',
-            questions: [{
-              question,
-              answer: answer || 'SKIP',
-              score: hrEvaluation.overallScore,
-              metrics: hrEvaluation.metrics
-            }],
-            overallScore: hrEvaluation.overallScore
-          });
+          await InterviewSession.create(sessionData);
+          console.log(`[Dashboard Sync] HR Interview session saved successfully to MongoDB for user: ${userId}`);
         } catch (dbErr) {
-          // Silent fallback
+          console.error(`[Dashboard Sync Warning] MongoDB Atlas save failed for HR Interview: ${dbErr.message}`);
         }
       }
 

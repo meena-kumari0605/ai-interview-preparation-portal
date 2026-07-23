@@ -1,5 +1,6 @@
 const aiService = require('../services/aiService');
 const CareerRoadmap = require('../models/CareerRoadmap');
+const memoryStore = require('../utils/memoryStore');
 
 /**
  * Handles POST /api/roadmap
@@ -21,23 +22,30 @@ exports.handleCareerRoadmap = async (req, res, next) => {
       experience: experience || '1'
     });
 
-    if (req.user) {
+    const userId = req.user ? (req.user.id || req.user._id) : null;
+    if (userId) {
+      const roadmapRecord = {
+        user: userId,
+        targetRole,
+        currentSkills: currentSkills || 'General Programming',
+        experience: experience || '1',
+        estimatedTimeframe: roadmapData.estimatedTimeframe,
+        learningPath: roadmapData.learningPath,
+        projects: roadmapData.projects,
+        technologies: roadmapData.technologies,
+        certifications: roadmapData.certifications,
+        timeline: roadmapData.timeline,
+        freeResources: roadmapData.freeResources,
+        createdAt: new Date()
+      };
+
+      memoryStore.addCareerRoadmap(roadmapRecord);
+
       try {
-        await CareerRoadmap.create({
-          user: req.user.id,
-          targetRole,
-          currentSkills: currentSkills || 'General Programming',
-          experience: experience || '1',
-          estimatedTimeframe: roadmapData.estimatedTimeframe,
-          learningPath: roadmapData.learningPath,
-          projects: roadmapData.projects,
-          technologies: roadmapData.technologies,
-          certifications: roadmapData.certifications,
-          timeline: roadmapData.timeline,
-          freeResources: roadmapData.freeResources
-        });
+        await CareerRoadmap.create(roadmapRecord);
+        console.log(`[Dashboard Sync] Career Roadmap saved successfully to MongoDB for user: ${userId}`);
       } catch (dbErr) {
-        // Fallback for volatile DB
+        console.error(`[Dashboard Sync Warning] MongoDB Atlas save failed for Career Roadmap: ${dbErr.message}`);
       }
     }
 

@@ -1,8 +1,6 @@
 const aiService = require('../services/aiService');
 const InterviewSession = require('../models/InterviewSession');
-
-// Memory store fallback for sessions
-const memorySessions = [];
+const memoryStore = require('../utils/memoryStore');
 
 /**
  * Handles POST /api/mock-interview
@@ -12,7 +10,7 @@ const memorySessions = [];
  */
 exports.handleMockInterview = async (req, res, next) => {
   try {
-    const { action, role, company, experience, difficulty, previousQuestions, question, answer, sessionId } = req.body;
+    const { action, role, company, experience, difficulty, previousQuestions, question, answer } = req.body;
 
     // Action 1: Generate AI Question
     if (action === 'generate_question') {
@@ -53,38 +51,37 @@ exports.handleMockInterview = async (req, res, next) => {
       });
 
       // Save evaluation session if user is logged in
-      const userId = req.user ? req.user.id : null;
+      const userId = req.user ? (req.user.id || req.user._id) : null;
       if (userId) {
+        const sessionData = {
+          user: userId,
+          type: 'MOCK',
+          role: role || 'Software Engineer',
+          company: company || 'Tech Corp',
+          experience: experience || '2',
+          difficulty: difficulty || 'Medium',
+          questions: [{
+            question,
+            answer: answer || 'SKIP',
+            skipped: evaluation.overallScore === 0,
+            score: evaluation.overallScore,
+            metrics: evaluation.metrics,
+            strengths: evaluation.strengths,
+            weaknesses: evaluation.weaknesses,
+            betterAnswer: evaluation.betterAnswer,
+            followUpQuestion: evaluation.followUpQuestion
+          }],
+          overallScore: evaluation.overallScore,
+          createdAt: new Date()
+        };
+
+        memoryStore.addSession(sessionData);
+
         try {
-          await InterviewSession.create({
-            user: userId,
-            type: 'MOCK',
-            role: role || 'Software Engineer',
-            company: company || 'Tech Corp',
-            experience: experience || '2',
-            difficulty: difficulty || 'Medium',
-            questions: [{
-              question,
-              answer: answer || 'SKIP',
-              skipped: evaluation.overallScore === 0,
-              score: evaluation.overallScore,
-              metrics: evaluation.metrics,
-              strengths: evaluation.strengths,
-              weaknesses: evaluation.weaknesses,
-              betterAnswer: evaluation.betterAnswer,
-              followUpQuestion: evaluation.followUpQuestion
-            }],
-            overallScore: evaluation.overallScore
-          });
+          await InterviewSession.create(sessionData);
+          console.log(`[Dashboard Sync] Mock Interview session saved successfully to MongoDB for user: ${userId}`);
         } catch (dbErr) {
-          memorySessions.push({
-            user: userId,
-            type: 'MOCK',
-            role: role || 'Software Engineer',
-            company: company || 'Tech Corp',
-            overallScore: evaluation.overallScore,
-            createdAt: new Date()
-          });
+          console.error(`[Dashboard Sync Warning] MongoDB Atlas save failed for Mock Interview: ${dbErr.message}`);
         }
       }
 
