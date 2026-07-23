@@ -1,0 +1,19 @@
+{
+  "name": "interviewai-root",
+  "version": "1.0.0",
+  "description": "InterviewAI - AI Powered Interview Preparation Portal Fullstack Application",
+  "main": "server/server.js",
+  "scripts": {
+    "postinstall": "npm install --prefix server && npm install --prefix client",
+    "dev:server": "npm run dev --prefix server",
+    "dev:client": "npm run dev --prefix client",
+    "dev": "concurrently -n \"SERVER,CLIENT\" -c \"cyan,magenta\" \"npm run dev:server\" \"npm run dev:client\"",
+    "build:client": "npm run build --prefix client",
+    "build": "npm run build:client",
+    "start:server": "npm start --prefix server",
+    "start": "concurrently -n \"SERVER,CLIENT\" -c \"cyan,magenta\" \"npm run start:server\" \"npm run dev:client\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

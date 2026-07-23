@@ -1,0 +1,27 @@
+# AWS App Runner Production Deployment Manifest
+version: 1.0
+runtime: nodejs20
+build:
+  commands:
+    build:
+      - npm install
+      - npm run build
+run:
+  command: node server/server.js
+  network:
+    port: 5000
+  health-check:
+    path: /api/health
+    interval: 10
+    timeout: 5
+    healthy-threshold: 1
+    unhealthy-threshold: 3
+  env:
+    - name: NODE_ENV
+      value: production
+    - name: PORT
+      value: 5000
+    - name: JWT_SECRET
+      value: super_secret_interviewai_jwt_key_2026_production
+    - name: MODEL_NAME
+      value: llama-3.3-70b-versatile
